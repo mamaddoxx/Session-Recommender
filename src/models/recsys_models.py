@@ -3,14 +3,12 @@
 import torch
 from torch import nn
 from torch.utils.data import Dataset, DataLoader
+import torch.nn.utils.rnn as rnn_utils
+
 
 class SessionDataset(Dataset):
     def __init__(self, X, y, lengths):
-        """
-        X: numpy array (num_samples, max_len) of item indices
-        y: numpy array (num_samples,) of target item indices
-        lengths: numpy array (num_samples,) of sequence lengths
-        """
+        # X: (N, T), y: (N,), lengths: (N,)
         self.X = torch.from_numpy(X).long()
         self.y = torch.from_numpy(y).long()
         self.lengths = torch.from_numpy(lengths).long()
@@ -33,43 +31,62 @@ class GRU4Rec(nn.Module):
         num_items: int,
         embedding_dim: int = 64,
         hidden_dim: int = 128,
-        padding_idx: int = 0
+        num_layers: int = 1,
+        dropout: float = 0.0,
+        padding_idx: int = 0,
     ):
+        """
+        num_items: number of distinct items (max index in item2idx)
+        """
         super().__init__()
+
         self.num_items = num_items
         self.embedding_dim = embedding_dim
         self.hidden_dim = hidden_dim
+        self.num_layers = num_layers
 
+        # +1 because index 0 is reserved for PAD
         self.item_emb = nn.Embedding(
-            num_embeddings=num_items + 1,  # +1 because indices start from 1
+            num_embeddings=num_items + 1,
             embedding_dim=embedding_dim,
-            padding_idx=padding_idx
+            padding_idx=padding_idx,
         )
 
         self.gru = nn.GRU(
             input_size=embedding_dim,
             hidden_size=hidden_dim,
-            batch_first=True
+            num_layers=num_layers,
+            batch_first=True,
+            dropout=dropout if num_layers > 1 else 0.0,
         )
 
-        self.fc = nn.Linear(hidden_dim, num_items + 1)  # logits for all items
+        self.fc = nn.Linear(hidden_dim, num_items + 1)
 
     def forward(self, x, lengths):
         """
-        x: (B, T)
-        lengths: (B,)
-        """
-        emb = self.item_emb(x)   # (B, T, D)
+        x: (B, T)      → padded item indices
+        lengths: (B,)  → true sequence lengths (before padding)
 
-        # pack sequences (because of padding)
-        packed = nn.utils.rnn.pack_padded_sequence(
+        returns:
+            logits: (B, num_items+1)
+        """
+        # (B, T, D)
+        emb = self.item_emb(x)
+
+        # pack padded sequence for GRU
+        packed = rnn_utils.pack_padded_sequence(
             emb,
             lengths.cpu(),
             batch_first=True,
-            enforce_sorted=False
+            enforce_sorted=False,
         )
-        _, h_n = self.gru(packed)  # h_n: (1, B, H)
-        h = h_n.squeeze(0)         # (B, H)
 
-        logits = self.fc(h)        # (B, num_items+1)
+        # h_n: (num_layers, B, H)
+        _, h_n = self.gru(packed)
+
+        # take LAST layer's hidden state: (B, H)
+        h = h_n[-1]  # shape (B, H)
+
+        # final logits: (B, num_items+1)
+        logits = self.fc(h)
         return logits
