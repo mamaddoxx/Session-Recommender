@@ -16,13 +16,12 @@ Recall@20 and MRR@20.
 
 ##  Project Highlights
 
-✔ Full sequential modeling pipeline\
-✔ Custom preprocessing and masking logic\
-✔ Three GRU baselines (small/medium/large)\
-✔ Full SASRec Transformer implementation\
-✔ Stable training after attention-mask fixes\
-✔ Epoch-level metric logging (loss, recall, MRR)\
-✔ Production-ready modular code structure
+ Full sequential modeling pipeline\
+ - Custom preprocessing and masking logic\
+ - Three GRU baselines (small/medium/large)\
+ - Full SASRec Transformer implementation\
+ - Stable training after attention-mask fixes\
+
 
 ------------------------------------------------------------------------
 
