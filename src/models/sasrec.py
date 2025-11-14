@@ -2,64 +2,23 @@
 
 import torch
 from torch import nn
-import torch.nn.functional as F
-
-
-class SASRecBlock(nn.Module):
-    """
-    One transformer block used in SASRec:
-    - Multi-head self-attention (causal)
-    - Residual + LayerNorm
-    - Position-wise FFN + residual + LayerNorm
-    """
-
-    def __init__(self, d_model: int, n_heads: int, d_ff: int, dropout: float):
-        super().__init__()
-        self.self_attn = nn.MultiheadAttention(
-            embed_dim=d_model,
-            num_heads=n_heads,
-            dropout=dropout,
-            batch_first=True,  # (B, T, D)
-        )
-        self.dropout = nn.Dropout(dropout)
-        self.norm1 = nn.LayerNorm(d_model)
-
-        self.ffn = nn.Sequential(
-            nn.Linear(d_model, d_ff),
-            nn.GELU(),
-            nn.Dropout(dropout),
-            nn.Linear(d_ff, d_model),
-        )
-        self.norm2 = nn.LayerNorm(d_model)
-
-    def forward(self, x, attn_mask=None, key_padding_mask=None):
-        # x: (B, T, D)
-        attn_out, _ = self.self_attn(
-            x, x, x,
-            attn_mask=attn_mask,               # (T, T) causal mask
-            key_padding_mask=key_padding_mask  # (B, T) padding mask
-        )
-        x = self.norm1(x + self.dropout(attn_out))
-        ffn_out = self.ffn(x)
-        x = self.norm2(x + self.dropout(ffn_out))
-        return x
 
 
 class SASRec(nn.Module):
     """
-    Production-style SASRec for next-item prediction.
+    Simplified, numerically-stable SASRec-style model using TransformerEncoder.
 
-    - item_emb: shared input & (optional) output weights
-    - pos_emb: learnable positional embeddings
-    - N transformer blocks with MHSA + FFN
-    - Causal attention mask + padding mask
-    - Predicts next item from the last non-padded position
+    - No manual causal mask (avoids NaN issues).
+    - Uses padding mask so PAD tokens are ignored.
+    - Still uses positional + item embeddings and Transformer blocks.
+    - Next-item prediction from the last non-padded position.
 
     Inputs:
         x:       (B, T)  padded item indices, 0 = PAD
         lengths: (B,)    true sequence lengths
-    Returns:
-        logits:  (B, num_items+1)  scores for next item
+
+    Output:
+        logits:  (B, num_items+1) scores for next item
     """
 
     def __init__(
@@ -83,7 +42,7 @@ class SASRec(nn.Module):
 
         # ----- Embeddings -----
         self.item_emb = nn.Embedding(
-            num_embeddings=num_items + 1,      # +1 for PAD
+            num_embeddings=num_items + 1,      # +1 for PAD index
             embedding_dim=d_model,
             padding_idx=padding_idx,
         )
@@ -92,16 +51,18 @@ class SASRec(nn.Module):
             embedding_dim=d_model,
         )
 
-        # ----- Transformer blocks -----
-        self.blocks = nn.ModuleList([
-            SASRecBlock(
-                d_model=d_model,
-                n_heads=n_heads,
-                d_ff=d_ff,
-                dropout=dropout,
-            )
-            for _ in range(n_layers)
-        ])
+        # ----- Transformer encoder (no custom mask, just padding mask) -----
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=d_model,
+            nhead=n_heads,
+            dim_feedforward=d_ff,
+            dropout=dropout,
+            batch_first=True,  # (B, T, D)
+        )
+        self.encoder = nn.TransformerEncoder(
+            encoder_layer,
+            num_layers=n_layers,
+        )
 
         self.dropout = nn.Dropout(dropout)
         self.layer_norm = nn.LayerNorm(d_model)
@@ -110,7 +71,7 @@ class SASRec(nn.Module):
         self.out = nn.Linear(d_model, num_items + 1, bias=False)
 
         if tie_weights:
-            # tie output weights with item embeddings (common trick)
+            # Tie output weights with item embeddings
             self.out.weight = self.item_emb.weight
 
         self._reset_parameters()
@@ -118,58 +79,53 @@ class SASRec(nn.Module):
     def _reset_parameters(self):
         nn.init.normal_(self.item_emb.weight, mean=0.0, std=0.02)
         nn.init.normal_(self.pos_emb.weight, mean=0.0, std=0.02)
-        for block in self.blocks:
-            for m in block.modules():
-                if isinstance(m, nn.Linear):
-                    nn.init.xavier_uniform_(m.weight)
-                    if m.bias is not None:
-                        nn.init.zeros_(m.bias)
 
-    def _generate_causal_mask(self, T: int, device):
-        # True where attention is NOT allowed (future positions)
-        # Shape: (T, T)
-        mask = torch.triu(torch.ones(T, T, device=device, dtype=torch.bool), diagonal=1)
-        return mask  # used as attn_mask
+        for m in self.encoder.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.xavier_uniform_(m.weight)
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
 
     def forward(self, x, lengths):
         """
-        x:       (B, T)  padded sequences
-        lengths: (B,)    true lengths
+        x:       (B, T)
+        lengths: (B,)
         """
         device = x.device
         B, T = x.size()
 
-        # ----- Embedding + position -----
+        # --- Embeddings ---
         item_emb = self.item_emb(x)  # (B, T, D)
 
-        # position indices: 0..T-1 for each batch
         pos_ids = torch.arange(T, device=device).unsqueeze(0).expand(B, T)
         pos_emb = self.pos_emb(pos_ids)  # (B, T, D)
 
         h = item_emb + pos_emb
         h = self.dropout(h)
 
-        # ----- Masks -----
-        causal_mask = self._generate_causal_mask(T, device=device)  # (T, T)
-        # True where padding (should NOT be attended to)
-        key_padding_mask = (x == self.padding_idx)  # (B, T)
+        # --- Padding mask: True where we want to IGNORE (PAD positions) ---
+        # nn.TransformerEncoder expects src_key_padding_mask with shape (B, T)
+        # where True => position is ignored.
+        key_padding_mask = (x == self.padding_idx)  # (B, T), bool
 
-        # ----- Transformer blocks -----
-        for block in self.blocks:
-            h = block(
-                h,
-                attn_mask=causal_mask,
-                key_padding_mask=key_padding_mask,
-            )
+        # --- Transformer encoder ---
+        # No attn_mask (no causal mask) -> full self-attention over sequence.
+        h = self.encoder(
+            h,
+            src_key_padding_mask=key_padding_mask,
+        )  # (B, T, D)
 
-        h = self.layer_norm(h)  # (B, T, D)
+        h = self.layer_norm(h)
 
-        # ----- Take last non-padded position for each sequence -----
-        # lengths are 1-based, so last index = lengths - 1
-        last_idx = (lengths - 1).clamp(min=0)  # (B,)
-        batch_idx = torch.arange(B, device=device)
-        last_hidden = h[batch_idx, last_idx]   # (B, D)
+        # --- Take last non-padded position for each sequence ---
+        last_idx = (lengths - 1).clamp(min=0)          # (B,)
+        batch_idx = torch.arange(B, device=device)     # (B,)
+        last_hidden = h[batch_idx, last_idx]           # (B, D)
 
-        # ----- Project to item logits -----
+        # --- Project to logits over items ---
         logits = self.out(last_hidden)  # (B, num_items+1)
+
+        # Extra safety: replace any NaNs/Infs with finite numbers
+        logits = torch.nan_to_num(logits, neginf=-1e4, posinf=1e4)
+
         return logits

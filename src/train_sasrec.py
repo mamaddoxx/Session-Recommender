@@ -6,17 +6,23 @@ from pathlib import Path
 import numpy as np
 import torch
 from torch import nn, optim
-from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from src.models.recsys_models import create_dataloader
 from src.models.sasrec import SASRec
-
+import importlib
+import sys
+sys.path.append(str(Path().resolve()))
+import src.models.sasrec as sasrec
+importlib.reload(sasrec)
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 
 def recall_mrr_at_k(model, dataloader, ks=(10, 20), device=DEVICE):
+    """
+    Compute Recall@K and MRR@K for next-item prediction.
+    """
     model.eval()
     ks = sorted(ks)
     recalls = {k: 0 for k in ks}
@@ -51,7 +57,7 @@ def train_sasrec(
     model_dir: Path,
     batch_size: int = 256,
     num_epochs: int = 20,
-    lr: float = 1e-3,
+    lr: float = 5e-4,          
     weight_decay: float = 1e-5,
     d_model: int = 128,
     n_heads: int = 4,
@@ -59,7 +65,6 @@ def train_sasrec(
     d_ff: int = 512,
     dropout: float = 0.2,
 ):
-
     # ----- Load data -----
     X_train = np.load(data_dir / "X_train.npy")
     y_train = np.load(data_dir / "y_train.npy")
@@ -97,6 +102,7 @@ def train_sasrec(
 
     model_dir.mkdir(parents=True, exist_ok=True)
     best_val_loss = float("inf")
+    best_state = None
 
     for epoch in range(1, num_epochs + 1):
         model.train()
@@ -110,6 +116,11 @@ def train_sasrec(
             optimizer.zero_grad()
             logits = model(x, lengths)        # (B, num_items+1)
             loss = criterion(logits, y)
+
+            if torch.isnan(loss):
+                print("NaN loss detected. Sample logits[0][:10]:", logits[0][:10])
+                raise RuntimeError("NaN loss – check SASRec inputs / masks")
+
             loss.backward()
             nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
             optimizer.step()
@@ -117,8 +128,7 @@ def train_sasrec(
             bs = x.size(0)
             total_loss += loss.item() * bs
             total_count += bs
-
-            pbar.set_postfix({"loss": total_loss / total_count})
+            pbar.set_postfix(loss=total_loss / total_count)
 
         train_loss = total_loss / total_count
 
@@ -126,6 +136,7 @@ def train_sasrec(
         model.eval()
         val_loss = 0.0
         val_count = 0
+
         with torch.no_grad():
             for x, y, lengths in val_loader:
                 x, y, lengths = x.to(DEVICE), y.to(DEVICE), lengths.to(DEVICE)
@@ -145,25 +156,29 @@ def train_sasrec(
             f"MRR@10={mrrs[10]:.4f}, MRR@20={mrrs[20]:.4f}"
         )
 
-        # save best
         if val_loss < best_val_loss:
             best_val_loss = val_loss
-            torch.save(model.state_dict(), model_dir / "sasrec_best.pt")
+            best_state = model.state_dict()
+            torch.save(best_state, model_dir / "sasrec_best.pt")
             print("  -> Saved new best SASRec model")
 
         scheduler.step()
+
+    if best_state is not None:
+        model.load_state_dict(best_state)
 
     print("Training finished.")
     return model
 
 
 if __name__ == "__main__":
+    
     parser = argparse.ArgumentParser()
     parser.add_argument("--data_dir", type=str, default="data/processed")
     parser.add_argument("--model_dir", type=str, default="models")
     parser.add_argument("--batch_size", type=int, default=256)
     parser.add_argument("--epochs", type=int, default=20)
-    parser.add_argument("--lr", type=float, default=1e-3)
+    parser.add_argument("--lr", type=float, default=5e-4)
     parser.add_argument("--weight_decay", type=float, default=1e-5)
     parser.add_argument("--d_model", type=int, default=128)
     parser.add_argument("--n_heads", type=int, default=4)
