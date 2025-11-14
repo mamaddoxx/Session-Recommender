@@ -1,0 +1,41 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.pkl
+*.pth
+*.egg-info/
+*.log
+
+# environments
+recsys_env/
+venv/
+.env/
+.env.bak
+*.env
+
+#vscode
+.vscode/
+.idea/
+
+#data files  (Raw Data Files)
+data/raw/*
+!data/raw/.gitkeep
+
+# # PyTorch model weights
+# models/*.pt
+# models/*.pth
+
+runs/
+logs/
+tensorboard/
+*.ckpt
+
+.ipynb_checkpoints/
+
+~/.kaggle/kaggle.json
+kaggle.json
+
+# --
+*.bak
+*.backup
