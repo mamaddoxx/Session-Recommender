@@ -129,6 +129,6 @@ python src/train_sasrec.py
 ##  Future Work
 
 -   Other Model improvement BERT4Rec Model , Next-basked Recommendation
--   FastAPI inference endpoint\
--   MLflow tracking\
+-   FastAPI inference endpoint
+-   MLflow tracking
 -   Dockerized deployment
