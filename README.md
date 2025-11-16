@@ -3,7 +3,7 @@
 ### GRU4Rec → Transformer (SASRec) Upgrade with Major Performance Improvements
 
 This project implements an end-to-end **Session-Based Recommendation
-System** using the **YooChoose** dataset.\
+System** using the **YooChoose** dataset.
 It follows a full ML lifecycle: data preprocessing, EDA, baseline
 modeling, Transformer modeling, evaluation, and production-level
 engineering.
@@ -16,42 +16,42 @@ Recall@20 and MRR@20.
 
 ##  Project Highlights
 
- Full sequential modeling pipeline\
- - Custom preprocessing and masking logic\
- - Three GRU baselines (small/medium/large)\
- - Full SASRec Transformer implementation\
- - Stable training after attention-mask fixes\
+ Full sequential modeling pipeline
+ - Custom preprocessing and masking logic
+ - Three GRU baselines (small/medium/large)
+ - Full SASRec Transformer implementation
+ - Stable training after attention-mask fixes
 
 
 ------------------------------------------------------------------------
 
 ##  Dataset
 
-**YooChoose Clicks** dataset\
-- \~Milions click events\
-- Session-based behaviors\
-- Item IDs + categories\
+**YooChoose Clicks** dataset
+- \~Milions click events
+- Session-based behaviors
+- Item IDs + categories
 - Perfect for next-item prediction
 
 ------------------------------------------------------------------------
 
 ##  Preprocessing
 
--   Convert raw `.dat` files into indexed sequences\
--   Pad sessions to fixed length (50)\
--   Build next-item prediction pairs\
--   Generate numpy-ready training arrays\
+-   Convert raw `.dat` files into indexed sequences
+-   Pad sessions to fixed length (50)
+-   Build next-item prediction pairs
+-   Generate numpy-ready training arrays
 -   Save mapping dictionaries (`item2idx`, etc.)
 
 ------------------------------------------------------------------------
 
 ##  EDA
 
-Includes:\
-- Session length distribution\
-- Item popularity\
-- Category frequencies\
-- Long-tail analysis\
+Includes:
+- Session length distribution
+- Item popularity
+- Category frequencies
+- Long-tail analysis
 - Interaction patterns
 
 ------------------------------------------------------------------------
@@ -72,16 +72,16 @@ Three baselines trained:
 
 Includes:
 
--   Masked self-attention\
--   Positional encodings\
--   Multi-head attention\
--   Feed-forward transformer blocks\
--   Tied embeddings\
+-   Masked self-attention
+-   Positional encodings
+-   Multi-head attention
+-   Feed-forward transformer blocks
+-   Tied embeddings
 -   Dropout & LayerNorm
 
-Engineering improvements: - Masking fixes → stable loss\
-- Gradient clipping\
-- LR scheduler\
+Engineering improvements: - Masking fixes → stable loss
+- Gradient clipping
+- LR scheduler
 - Correct padding/causal attention
 
 ------------------------------------------------------------------------
@@ -90,15 +90,15 @@ Engineering improvements: - Masking fixes → stable loss\
 
   Model        Recall@20   MRR@20
   ------------ ----------- -----------
-  GRU (best)   \~0.11      \~0.029
+  GRU (best)   ~0.11      ~0.029
   **SASRec**   **0.67+**   **0.37+**
 
 ------------------------------------------------------------------------
 
 ##  Trend Plots
 
--   Train vs Val Loss\
--   Recall@10/20\
+-   Train vs Val Loss
+-   Recall@10/20
 -   MRR@10/20
 ##  How to Run
 
